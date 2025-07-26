@@ -74,6 +74,7 @@ The core architecture separates control flow (single process) from computation f
 - `verl/experimental/`: Experimental features (agent loops, etc.)
 - `examples/`: Example scripts for various algorithms
 - `recipe/`: Advanced algorithms and recipes
+- `custom_sft/`: Custom SFT training scripts and configurations (user-created)
 
 ### Configuration System
 Uses Hydra-core for hierarchical configuration:

@@ -1,12 +1,14 @@
 set -x
 
 nproc_per_node=1
-save_path=./models/sft
+# [change] change the save path to test file
+save_path=/mnt/sharefs/users/haolong.jia/RL-model/sft_rl
 
+# [change] change the data path to test file
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
      -m verl.trainer.fsdp_sft_trainer \
-    data.train_files=$HOME/data/char_count/sft/train.parquet \
-    data.val_files=$HOME/data/char_count/sft/test.parquet \
+    data.train_files=/mnt/sharefs/users/haolong.jia/RL-data/char_count/sft/train.parquet \
+    data.val_files=/mnt/sharefs/users/haolong.jia/RL-data/char_count/sft/test.parquet \
     data.prompt_key=prompt \
     data.response_key=response \
     data.micro_batch_size_per_gpu=8 \
