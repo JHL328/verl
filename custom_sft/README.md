@@ -90,14 +90,14 @@ Reinforcement Learning (RL) training for LLMs optimizes the model to generate be
 ### Key Components
 
 1. **Actor Model**: Your SFT-trained model that generates responses
-2. **Critic Model**: Estimates the value/quality of generated responses
+2. **Critic Model**: Estimates the value/quality of generated responses (not needed for GRPO)
 3. **Reward Model**: Scores how good a response is (can be external API, human feedback, or another model)
 4. **Reference Model**: Original model used to prevent the actor from deviating too much (KL regularization)
 
 ### Supported RL Algorithms
 
-- **PPO (Proximal Policy Optimization)**: Most popular, stable training
-- **GRPO (Grouped Reward Policy Optimization)**: More efficient variant
+- **PPO (Proximal Policy Optimization)**: Most popular, stable training with separate critic model
+- **GRPO (Group Relative Policy Optimization)**: More efficient, critic-free variant
 - **REINFORCE++**: Simple policy gradient method
 - **RLOO**: Leave-one-out baseline method
 - **Others**: ReMax, PRIME, DAPO, DrGRPO
@@ -208,3 +208,122 @@ python -m verl.trainer.main_ppo \
 - RL training typically runs for fewer epochs than SFT (1-2 epochs)
 - Monitor both rewards and response quality during training
 - The SFT → RL pipeline is the standard RLHF approach
+
+## Deep Dive: GRPO (Group Relative Policy Optimization)
+
+### What is GRPO?
+
+GRPO is a simplified RL algorithm that eliminates the need for a separate critic (value) model. Instead of using a critic to estimate the value of states, GRPO uses group-based sampling and relative rewards within each group.
+
+### How GRPO Works
+
+1. **Group Sampling**: For each prompt, generate multiple (n>1) responses using the current policy
+2. **Reward Computation**: Calculate rewards for all responses in the group
+3. **Baseline Calculation**: Use the group's mean reward as the baseline
+4. **Advantage Estimation**: Normalize each response's reward: `(reward - mean) / (std + epsilon)`
+5. **Policy Update**: Update the policy using these normalized advantages
+
+### GRPO Architecture
+
+```
+Input Prompts → Actor Model → Multiple Responses per Prompt
+                                        ↓
+                              Reward Model → Rewards
+                                        ↓
+                              Group Statistics (mean, std)
+                                        ↓
+                              Normalized Advantages
+                                        ↓
+                              Policy Update (PPO-style)
+```
+
+### Key Implementation Details
+
+#### Core Algorithm (`verl/trainer/ppo/core_algos.py`):
+- `compute_grpo_outcome_advantage`: Computes group-relative advantages
+- Groups responses by prompt index
+- Calculates per-group statistics
+- Normalizes rewards within each group
+
+#### Configuration Parameters:
+```yaml
+# Essential GRPO settings
+algorithm.adv_estimator: grpo              # Enable GRPO
+actor_rollout_ref.rollout.n: 5             # Samples per prompt (must be >1)
+actor_rollout_ref.actor.use_kl_loss: true  # KL regularization in loss
+algorithm.use_kl_in_reward: false          # No KL in reward for GRPO
+
+# Hyperparameters
+actor_rollout_ref.actor.kl_loss_coef: 0.001
+algorithm.norm_adv_by_std_in_grpo: true    # Normalize by std (set false for DrGRPO)
+```
+
+### GRPO vs PPO Comparison
+
+| Feature | PPO | GRPO |
+|---------|-----|------|
+| **Critic Model** | Required | Not needed |
+| **Memory Usage** | High (2 models) | Low (1 model) |
+| **Training Speed** | Slower | Faster |
+| **Sampling** | 1 response/prompt | n responses/prompt |
+| **Baseline** | Critic prediction | Group mean |
+| **Stability** | Good | Better |
+| **Complexity** | Higher | Lower |
+
+### Example GRPO Script
+
+```bash
+python -m verl.trainer.main_ppo \
+    algorithm.adv_estimator=grpo \
+    actor_rollout_ref.model.path=Qwen/Qwen3-8B \
+    actor_rollout_ref.rollout.n=5 \
+    actor_rollout_ref.actor.use_kl_loss=true \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    algorithm.use_kl_in_reward=false \
+    data.train_batch_size=1024 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=256 \
+    actor_rollout_ref.actor.optim.lr=1e-6
+```
+
+### DrGRPO Variant
+
+DrGRPO addresses optimization bias in GRPO by:
+- Disabling standard deviation normalization
+- Using different loss aggregation to eliminate length bias
+
+```yaml
+# DrGRPO specific settings
+algorithm.norm_adv_by_std_in_grpo: false
+actor_rollout_ref.actor.loss_agg_mode: seq-mean-token-sum-norm
+actor_rollout_ref.actor.use_kl_loss: false
+```
+
+### When to Use GRPO
+
+**Use GRPO when:**
+- You want simpler, more stable training
+- Memory is limited (no critic model)
+- You're new to RL training
+- Your reward function is reliable
+
+**Use PPO when:**
+- You need fine-grained value estimates
+- Your reward is sparse or noisy
+- You have complex environments
+- Memory is not a constraint
+
+### GRPO Best Practices
+
+1. **Group Size**: Use n=5-10 samples per prompt
+2. **Batch Size**: Can use larger batches (1024) due to no critic
+3. **Learning Rate**: Start with 1e-6, adjust based on stability
+4. **KL Coefficient**: Start with 0.001, increase if model diverges
+5. **Epochs**: Usually 10-20 epochs work well
+6. **Monitoring**: Watch reward distribution within groups
+
+### Common GRPO Issues
+
+- **All responses identical**: Increase temperature or top_p during sampling
+- **High variance in groups**: Increase group size or reduce learning rate
+- **Model not improving**: Check reward function, may need adjustment
+- **Length bias**: Try DrGRPO variant
