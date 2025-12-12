@@ -301,6 +301,7 @@ class RLHFDataset(Dataset):
             raw_prompt = self.processor.apply_chat_template(
                 messages, add_generation_prompt=True, tokenize=False, **self.apply_chat_template_kwargs
             )
+            print(f"raw_prompt: {raw_prompt}")
             multi_modal_data = {}
 
             images = None
