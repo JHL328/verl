@@ -66,7 +66,14 @@ def update_model_config(module_config, override_config_kwargs):
     """
     for key, val in override_config_kwargs.items():
         if isinstance(val, dict):
-            update_model_config(getattr(module_config, key), val)
+            # Some HF config fields (e.g. llama `rope_scaling`) can be `None` by default but are
+            # expected to be overridden with a dict. In that case, recursively updating would
+            # attempt to setattr() on None and crash.
+            cur = getattr(module_config, key, None)
+            if cur is None:
+                setattr(module_config, key, val)
+            else:
+                update_model_config(cur, val)
         else:
             setattr(module_config, key, val)
 
